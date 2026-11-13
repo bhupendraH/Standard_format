@@ -1,0 +1,13 @@
+myenv
+docs
+.env
+__pycache__/
+.pytest_cache/
+
+# Email-job files copied into this folder; not part of this repo
+config.json
+run_job.py
+run_job.py.sha256
+
+# Exported chat transcripts
+2026-11-13-151436-*.txt
