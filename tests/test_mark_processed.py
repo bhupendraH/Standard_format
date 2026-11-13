@@ -121,6 +121,29 @@ def test_azure_error_hides_secret():
     assert "https://" not in line
 
 
+def _failing_with(error_code):
+    class FailingContainer(FakeContainer):
+        def list_blobs(self, **kw):
+            err = HttpResponseError(message=f"denied {SAS_URL}")
+            err.status_code = 403
+            err.error_code = error_code
+            raise err
+
+    return FailingContainer()
+
+
+def test_azure_error_includes_error_code():
+    assert go(["request_101"], _failing_with("AuthorizationPermissionMismatch")) == (
+        3,
+        "ERROR HttpResponseError 403 AuthorizationPermissionMismatch",
+    )
+
+
+def test_azure_error_drops_unsafe_error_code():
+    code, line = go(["request_101"], _failing_with(f"x {SAS_URL}"))
+    assert (code, line) == (3, "ERROR HttpResponseError 403")
+
+
 def test_main_prints_one_line(capsys, monkeypatch):
     monkeypatch.setattr(mark_processed, "run", lambda argv, environ: (2, "NOT_FOUND request_9"))
     with pytest.raises(SystemExit) as exc:

@@ -28,6 +28,7 @@ from azure.storage.blob import ContainerClient, ContentSettings
 
 SAS_ENV = "AZURE_BLOB_SAS_URL"
 _ID_PATTERN = re.compile(r"request_[0-9]+")
+_ERROR_CODE_PATTERN = re.compile(r"[A-Za-z]{1,64}")
 
 
 def is_valid_request_id(value: str) -> bool:
@@ -79,6 +80,12 @@ def run(
         status = getattr(exc, "status_code", None)
         if status is not None:
             reason += f" {status}"
+        # Azure's error code (e.g. AuthorizationPermissionMismatch) says *why*;
+        # print it only if it is a plain word, so nothing URL-like can leak.
+        error_code = getattr(exc, "error_code", None)
+        error_code = str(getattr(error_code, "value", error_code) or "")
+        if _ERROR_CODE_PATTERN.fullmatch(error_code):
+            reason += f" {error_code}"
         return 3, f"ERROR {reason}"
 
 
