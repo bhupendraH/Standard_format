@@ -11,3 +11,8 @@ run_job.py.sha256
 
 # Exported chat transcripts
 2026-11-13-151436-*.txt
+
+# Sample / real workbooks stay local (client data)
+/*.xlsx
+# Plan execution scratch
+.superpowers/
