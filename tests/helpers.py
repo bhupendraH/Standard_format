@@ -132,3 +132,78 @@ def make_g2b_xlsx(b2b=(), cdnr=(), *, period="March", fy="2024-25", gstin="27AAD
     for title, rows in (extra_sheets or {}).items():
         _portal_sheet(wb, title, ["Header"], ["Sub"], rows)
     return _xlsx(wb)
+
+
+BOT_CATEGORY = 'IF(reco_datatable[[#This Row],[status_ctgy]]="EXACT MATCH","Matched","Other")'
+BOT_REMARKS = 'IF(reco_datatable[[#This Row],[status_ctgy]]="PR+","x","y")'
+BOOKS_MONTH = "VALUE(MONTH(BooksCurrent[[#This Row],[doc_date]]))"
+
+_CALC_CT = (b'<Override PartName="/xl/calcChain.xml" ContentType="application/'
+            b'vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>')
+_CALC_REL = (b'<Relationship Id="rIdCalc" Type="http://schemas.openxmlformats.org/officeDocument/'
+             b'2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>')
+_CALC_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><calcChain xmlns="http://'
+             'schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="E2" i="4"/></calcChain>')
+
+
+def _table(ws, name, ref, headers, formulas):
+    from openpyxl.worksheet.table import Table, TableColumn, TableFormula
+
+    t = Table(displayName=name, name=name, ref=ref)
+    t.tableColumns = [
+        TableColumn(id=i, name=h, calculatedColumnFormula=(
+            TableFormula(attr_text=formulas[h]) if h in formulas else None))
+        for i, h in enumerate(headers, 1)
+    ]
+    ws.add_table(t)
+
+
+def make_mini_template(formulas=True) -> bytes:
+    """A small workbook shaped like Output_template.xlsx: a report sheet with header
+    cells, data sheets with tables whose row 2 is the formula prototype, an untouched
+    Sheet1, and a calcChain part."""
+    import zipfile
+    from datetime import date
+
+    from openpyxl.worksheet.formula import ArrayFormula
+
+    wb = openpyxl.Workbook()
+    rs = wb.active
+    rs.title = "Recon Summary"
+    rs["B2"], rs["C2"] = "Office GSTIN", "27AABCB5853G1ZP"
+    rs["B3"], rs["C3"] = "Reco Date", date(2025, 3, 20)
+    rs["C3"].number_format = "dd-mm-yyyy"
+    wb.create_sheet("Sheet1")["A1"] = "keep me"
+    wb.create_sheet("EXCLUSIONS").append(["Doc Number", "Vendor Name", "Error Flag"])
+
+    bot = wb.create_sheet("BOT_ReconData")
+    heads = ["id", "status_ctgy", "pr_vendor_name", "pr_doc_date", "Category", "Remarks"]
+    bot.append(heads)
+    bot["D2"].number_format = "dd-mm-yyyy"
+    if formulas:
+        bot["E2"] = "=" + BOT_CATEGORY
+        bot["F2"] = ArrayFormula("F2", "=" + BOT_REMARKS)
+    else:
+        bot["A2"] = None
+    bot.append([99, "OLD", "old row", None, None, None])
+    _table(bot, "reco_datatable", "A1:F3", heads,
+           {"Category": BOT_CATEGORY, "Remarks": BOT_REMARKS} if formulas else {})
+
+    books = wb.create_sheet("Books_CurrMnth")
+    bh = ["id", "doc_date", "Booking_Mnth"]
+    books.append(bh)
+    books.append([None, None, ("=" + BOOKS_MONTH) if formulas else None])
+    _table(books, "BooksCurrent", "A1:C2", bh, {"Booking_Mnth": BOOKS_MONTH} if formulas else {})
+
+    raw = _xlsx(wb)
+    src, out = zipfile.ZipFile(io.BytesIO(raw)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                data = data.replace(b"</Types>", _CALC_CT)
+            if info.filename == "xl/_rels/workbook.xml.rels":
+                data = data.replace(b"</Relationships>", _CALC_REL)
+            z.writestr(info, data)
+        z.writestr("xl/calcChain.xml", _CALC_XML)
+    return out.getvalue()
