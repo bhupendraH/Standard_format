@@ -207,3 +207,83 @@ def make_mini_template(formulas=True) -> bytes:
             z.writestr(info, data)
         z.writestr("xl/calcChain.xml", _CALC_XML)
     return out.getvalue()
+
+
+# Column headers of the real template (generated from it; keep in sync).
+BOOKS_HEADERS = ['id', 'doc_booking_tax_period', 'doc_booking_date', 'doc_type', 'purch_type', 'doc_number',
+ 'doc_date', 'erp_ref_number', 'vendor_gstin', 'vendor_name', 'place_of_supply', 'boe_date',
+ 'boe_number', 'port_code', 'Icegate_ref_date', 'reference_doc_number', 'reference_doc_date',
+ 'reverse_charge_flag', 'doc_value', 'taxable_value', 'tax_value', 'integrated_tax', 'central_tax',
+ 'state_tax', 'cess', 'po_number', 'po_date', 'doc_date_formatted', 'boe_date_formatted',
+ 'doc_value_formatted', 'taxable_value_fromatted', 'tax_value_formatted', 'int_doc_number',
+ 'error_flag', 'error_comment', 'Booking_Mnth']
+BOOKS_FORMULA_COLUMNS = ['Booking_Mnth']
+GSTR2B_HEADERS = ['id', 'org_gstin', 'tax_period', 'financial_year', 'generation_date', 'vendor_gstin',
+ 'vendor_name', 'invoice_number', 'invoice_type', 'invoice_date', 'invoice_value',
+ 'place_of_supply', 'reverse_charge_flag', 'rate', 'taxable_value', 'integrated_tax', 'central_tax',
+ 'state_tax', 'cess', 'gstr_1_5_filing_period', 'gstr_1_5_filing_date', 'itc_eligibility_flag',
+ 'reason', 'applicable_tx', 'source', 'irn', 'irn_date', 'GST_TGST']
+GSTR2B_FORMULA_COLUMNS = ['GST_TGST']
+EXCLUSIONS_HEADERS = ['Doc Booking Tax Period', 'Doc Booking Date', 'Doc Type', 'Purch Type', 'Doc Number', 'Doc Date',
+ 'Erp Ref Number', 'Vendor Gstin', 'Vendor Name', 'Place Of Supply', 'Boe Date', 'Boe Number',
+ 'Port Code', 'Icegate Ref Date', 'Reverse Charge Flag', 'Doc Value', 'Taxable Value', 'Tax Value',
+ 'Integrated Tax', 'Central Tax', 'State Tax', 'Cess', 'Po Number', 'Po Date', 'Error Flag',
+ 'Error Comment']
+EXCLUSIONS_FORMULA_COLUMNS = []
+BOT_HEADERS = ['id', 'recon_id', 'pr_recon_id', 'pr_doc_booking_tax_period', 'pr_doc_booking_date', 'pr_doc_type',
+ 'pr_purch_type', 'pr_doc_number', 'pr_int_doc_number', 'pr_doc_date', 'pr_erp_ref_number',
+ 'pr_vendor_gstin', 'pr_vendor_name', 'pr_place_of_supply', 'pr_boe_date', 'pr_boe_number',
+ 'pr_port_code', 'pr_reverse_charge_flag', 'pr_doc_value', 'pr_taxable_value', 'pr_integrated_tax',
+ 'pr_central_tax', 'pr_state_tax', 'pr_cess', 'pr_po_number', 'pr_po_date',
+ 'pr_icegate_reference_date', 'gstr2b_id', 'gstr2b_original_document_type',
+ 'gstr2b_original_document_number', 'gstr2b_original_document_date', 'gstr2b_org_gstin',
+ 'gstr2b_tax_period', 'gstr2b_financial_year', 'gstr2b_generation_date', 'gstr2b_vendor_gstin',
+ 'gstr2b_vendor_name', 'gstr2b_document_type', 'gstr2b_document_number',
+ 'gstr2b_intelligent_doc_number', 'gstr2b_document_supply_type', 'gstr2b_document_date',
+ 'gstr2b_document_value', 'gstr2b_place_of_supply', 'gstr2b_reverse_charge_flag', 'gstr2b_rate',
+ 'gstr2b_taxable_value', 'gstr2b_integrated_tax', 'gstr2b_central_tax', 'gstr2b_state_tax',
+ 'gstr2b_cess', 'gstr2b_gstr_1_5_filing_period', 'gstr2b_gstr_1_5_filing_date',
+ 'gstr2b_itc_eligibility_flag', 'gstr2b_reason', 'gstr2b_applicable_tx', 'gstr2b_source',
+ 'gstr2b_irn', 'gstr2b_irn_date', 'gstr2b_icegate_reference_date', 'gstr2b_port_code',
+ 'gstr2b_boe_number', 'gstr2b_boe_date', 'gstr2b_amended_flag', 'status_ctgy', 'status_sub_ctgy',
+ 'diff_doc_value', 'diff_tax_value', 'diff_taxable_value', 'diff_cgst_value', 'diff_sgst_value',
+ 'diff_igst_value', 'diff_cess_value', 'document_vendorGSTIN_status', 'document_number_status',
+ 'document_date_status', 'place_of_supply_status', 'document_value_status', 'taxable_value_status',
+ 'BOE_date_status', 'BOE_Number_status', 'tax_value_status', 'icegate_reference_status',
+ 'port_code_status', 'pr_reference_doc_number', 'pr_reference_doc_date', 'Category', 'Common_GSTIN',
+ 'Common_Invoice No', 'Common_InvoiceDate', 'Vendor Name', 'PR_Booking_Mnth', 'IGST', 'CGST',
+ 'SGCT', 'TGST', 'Remarks', 'Reco Decision']
+BOT_FORMULA_COLUMNS = ['Category', 'Common_GSTIN', 'Common_Invoice No', 'Common_InvoiceDate', 'Vendor Name',
+ 'PR_Booking_Mnth', 'IGST', 'CGST', 'SGCT', 'TGST', 'Remarks', 'Reco Decision']
+
+
+_TABLES = {
+    "Books_CurrMnth": ("BooksCurrent", BOOKS_HEADERS, BOOKS_FORMULA_COLUMNS),
+    "Books_PrevMnth_NextMnth": ("BooksPrevNext", BOOKS_HEADERS, BOOKS_FORMULA_COLUMNS),
+    "GSTR2B": ("GST2bCurrent", GSTR2B_HEADERS, GSTR2B_FORMULA_COLUMNS),
+    "GSTR2B_PrevMonth": ("GST2bPrev", GSTR2B_HEADERS, GSTR2B_FORMULA_COLUMNS),
+    "BOT_ReconData": ("reco_datatable", BOT_HEADERS, BOT_FORMULA_COLUMNS),
+}
+
+
+def make_full_template(formulas=True) -> bytes:
+    """A template with every sheet and the real column headers; each formula column
+    gets a trivial formula. Used by the end-to-end tests of reconcile.py."""
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    rs = wb.active
+    rs.title = "Recon Summary"
+    rs["C2"], rs["C3"] = "OLD GSTIN", "OLD DATE"
+    wb.create_sheet("EXCLUSIONS").append(EXCLUSIONS_HEADERS)
+    for sheet, (table, heads, fcols) in _TABLES.items():
+        ws = wb.create_sheet(sheet)
+        ws.append(heads)
+        ws.cell(2, 1).value = None
+        f = {}
+        if formulas:
+            for h in fcols:
+                f[h] = f"{table}[[#This Row],[{heads[0]}]]"
+                ws.cell(2, heads.index(h) + 1).value = "=" + f[h]
+        _table(ws, table, f"A1:{get_column_letter(len(heads))}2", heads, f)
+    return _xlsx(wb)

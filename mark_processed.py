@@ -76,17 +76,22 @@ def run(
             return 2, f"NOT_FOUND {request_id}"
         return 0, f"WRITTEN {write_marker(container, request_id)}"
     except Exception as exc:  # never echo str(exc): it may contain the SAS URL
-        reason = type(exc).__name__
-        status = getattr(exc, "status_code", None)
-        if status is not None:
-            reason += f" {status}"
-        # Azure's error code (e.g. AuthorizationPermissionMismatch) says *why*;
-        # print it only if it is a plain word, so nothing URL-like can leak.
-        error_code = getattr(exc, "error_code", None)
-        error_code = str(getattr(error_code, "value", error_code) or "")
-        if _ERROR_CODE_PATTERN.fullmatch(error_code):
-            reason += f" {error_code}"
-        return 3, f"ERROR {reason}"
+        return 3, azure_error_line(exc)
+
+
+def azure_error_line(exc: BaseException) -> str:
+    """'ERROR <type> [<http status>] [<azure error code>]' - nothing URL-like."""
+    reason = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        reason += f" {status}"
+    # Azure's error code (e.g. AuthorizationPermissionMismatch) says *why*;
+    # print it only if it is a plain word, so nothing URL-like can leak.
+    error_code = getattr(exc, "error_code", None)
+    error_code = str(getattr(error_code, "value", error_code) or "")
+    if _ERROR_CODE_PATTERN.fullmatch(error_code):
+        reason += f" {error_code}"
+    return f"ERROR {reason}"
 
 
 def main() -> None:
