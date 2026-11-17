@@ -6,6 +6,7 @@ __pycache__/
 
 # Email-job files copied into this folder; not part of this repo
 config.json
+input.json
 run_job.py
 run_job.py.sha256
 
@@ -16,3 +17,6 @@ run_job.py.sha256
 /*.xlsx
 # Plan execution scratch
 .superpowers/
+
+# Cloud run scratch folder (RUNNER.md)
+work/
