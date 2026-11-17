@@ -9,4 +9,4 @@ cd "$(dirname "$0")"
 python3 -m pip install -q --ignore-installed -r requirements.txt 2>/dev/null \
   || python3 -m pip install -q --ignore-installed --break-system-packages -r requirements.txt
 # Fail here, loudly, if the import still doesn't work.
-python3 -c "import azure.storage.blob, openpyxl"
+python3 -c "import azure.storage.blob, azure.identity, openpyxl"
