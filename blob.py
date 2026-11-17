@@ -17,9 +17,11 @@ Usage:
 ("Output", "OUTPUT", ...), else "output". Reads stay inside RUN, writes stay
 inside its output folder; nothing is ever deleted.
 
-Environment (an Entra ID app with Storage Blob Data Contributor; never printed):
-    AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
-    AZURE_STORAGE_ACCOUNT, AZURE_STORAGE_CONTAINER
+Environment (an Entra ID app with Storage Blob Data Contributor):
+    AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_STORAGE_ACCOUNT, AZURE_STORAGE_CONTAINER
+    AZURE_CLIENT_SECRET (optional: in the cloud it is a network secret that the
+        sandbox proxy adds to requests to login.microsoftonline.com, so the run
+        never sees it; set it in the shell for local use. Never printed.)
     CLAUDE_CODE_REMOTE_SESSION_ID (optional, recorded in run_status.json)
 
 Prints exactly one line and exits with:
@@ -35,15 +37,18 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+import requests
+
 _ID = re.compile(r"[A-Za-z0-9_-]+")
 _OUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,150}\.xlsx", re.I)
-_ERROR_CODE = re.compile(r"[A-Za-z]{1,64}")
+_ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
 SUPPORTED_AGENT = "GSTR2B"
-ENV_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET",
+ENV_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID",
             "AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_CONTAINER")
 MAX_FILES = 60
 MAX_BYTES = 200 * 1024 * 1024
@@ -58,15 +63,57 @@ class _Fail(Exception):
         self.code, self.line = code, line
 
 
+class TokenError(Exception):
+    """Token request failed. Carries only the HTTP status and Entra error code."""
+
+    def __init__(self, status_code: int, error_code: str):
+        super().__init__(f"token request failed: {status_code} {error_code}")
+        self.status_code, self.error_code = status_code, error_code
+
+
+class AppTokenCredential:
+    """Client-credentials token for the Entra ID app, usable by the Azure SDK.
+
+    The client secret is sent only if AZURE_CLIENT_SECRET is set (local use).
+    In the cloud it is a network secret: the sandbox proxy adds it to requests
+    to login.microsoftonline.com, so we send no secret and no Authorization header.
+    """
+
+    def __init__(self, environ: Mapping[str, str]):
+        self._tenant = environ["AZURE_TENANT_ID"]
+        self._client = environ["AZURE_CLIENT_ID"]
+        self._secret = environ.get("AZURE_CLIENT_SECRET") or ""
+        self._cache = {}
+
+    def get_token(self, *scopes, **kwargs):
+        from azure.core.credentials import AccessToken
+        scope = " ".join(scopes)
+        cached = self._cache.get(scope)
+        if cached and cached.expires_on - 300 > time.time():
+            return cached
+        form = {"grant_type": "client_credentials", "client_id": self._client, "scope": scope}
+        if self._secret:
+            form["client_secret"] = self._secret
+        resp = requests.post(
+            f"https://login.microsoftonline.com/{self._tenant}/oauth2/v2.0/token",
+            data=form, headers={"Accept": "application/json"}, timeout=60)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        if resp.status_code != 200 or not body.get("access_token"):
+            codes = body.get("error_codes") or []
+            code = f"AADSTS{codes[0]}" if codes else str(body.get("error") or "")
+            raise TokenError(resp.status_code, code)
+        token = AccessToken(body["access_token"], int(time.time()) + int(body.get("expires_in", 3599)))
+        self._cache[scope] = token
+        return token
+
+
 def make_container(environ: Mapping[str, str]):
     """Container client signed in as the Entra ID app (client credentials)."""
-    from azure.identity import ClientSecretCredential
     from azure.storage.blob import ContainerClient
-    credential = ClientSecretCredential(
-        tenant_id=environ["AZURE_TENANT_ID"],
-        client_id=environ["AZURE_CLIENT_ID"],
-        client_secret=environ["AZURE_CLIENT_SECRET"],
-    )
+    credential = AppTokenCredential(environ)
     return ContainerClient(
         account_url=f"https://{environ['AZURE_STORAGE_ACCOUNT']}.blob.core.windows.net",
         container_name=environ["AZURE_STORAGE_CONTAINER"],

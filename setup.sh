@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 python3 -m pip install -q --ignore-installed -r requirements.txt 2>/dev/null \
   || python3 -m pip install -q --ignore-installed --break-system-packages -r requirements.txt
 # Fail here, loudly, if the import still doesn't work.
-python3 -c "import azure.storage.blob, azure.identity, openpyxl, pandas"
+python3 -c "import azure.storage.blob, requests, openpyxl, pandas"
 
 # LibreOffice recalculates the workbook's formulas for the zero-errors check.
 # Best effort: if it cannot be installed the run continues and says so.

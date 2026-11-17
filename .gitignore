@@ -20,3 +20,6 @@ run_job.py.sha256
 
 # Cloud run scratch folder (RUNNER.md)
 work/
+
+# Local tests, not pushed
+tests/

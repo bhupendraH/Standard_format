@@ -1,4 +1,4 @@
 azure-storage-blob>=12.19
-azure-identity>=1.15
+requests>=2.31
 openpyxl>=3.1,<4
 pandas>=2.0

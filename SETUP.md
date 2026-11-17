@@ -40,15 +40,20 @@ folder if there is one. A re-run overwrites them.
 - Network access: allowed domains `login.microsoftonline.com` and
   `botiqblobuat.blob.core.windows.net`, plus "Allow package managers" (pip and
   apt for LibreOffice).
-- Environment variables (anyone using the environment can read them):
+- Environment variables (not secrets; anyone using the environment can read them):
 
   | Variable | Value |
   |---|---|
   | `AZURE_TENANT_ID` | Entra tenant of the app |
   | `AZURE_CLIENT_ID` | the app's client ID |
-  | `AZURE_CLIENT_SECRET` | the app's client secret |
   | `AZURE_STORAGE_ACCOUNT` | `botiqblobuat` |
   | `AZURE_STORAGE_CONTAINER` | `standardize-test` |
+
+- **Client secret: a network secret only**, for `login.microsoftonline.com`.
+  Do not add `AZURE_CLIENT_SECRET` as an environment variable. `blob.py` sends
+  the token request without a secret and the sandbox proxy adds it, so the run
+  never sees the value. A wrong or expired secret shows as
+  `ERROR TokenError 401 AADSTS7000215`; no secret added at all as `AADSTS7000216`.
 
 - The app needs the **Storage Blob Data Contributor** role on the storage
   account or container, otherwise runs fail with `AuthorizationPermissionMismatch`.
@@ -101,7 +106,8 @@ JSON body:
 
 ## Local use of blob.py
 
-Set the five `AZURE_*` variables in the shell, then for example:
+Set the four `AZURE_*` variables above plus `AZURE_CLIENT_SECRET` in the shell
+(locally there is no proxy to add it), then for example:
 
 ```powershell
 .\myenv\Scripts\python.exe blob.py pull de520ed0-b273-44be-9f23-63568dd13b9d GSTR2B TXN-001 work\run
