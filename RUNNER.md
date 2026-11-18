@@ -44,9 +44,15 @@ not call `blob.py status` for them.
 |---|---|
 | period | `INPUT/input.json` (`from_month`, `to_month`) |
 | config | `CONFIG/config.json` (everything else) |
-| template | `CONFIG/<config.output_template>` (e.g. `Outputformat.xlsx`) |
+| template | `CONFIG/<config.output_template>`; if the key is not set, `CONFIG/Outputformat.xlsx`; else the only `.xlsx` in `CONFIG` |
 | Purchase Register | `INPUT/<config.pr_subfolder>/` (default `PR`) |
-| GSTR-2B | `INPUT/<config.gstr2b_subfolder>/` (default `GSTR2B`); if that folder does not exist, `INPUT/GSTR2B/`, `INPUT/GSTR-2B/` or `INPUT/GSTR/`, noted on the Assumptions sheet |
+| GSTR-2B | `INPUT/<config.gstr2b_subfolder>/` (default `GSTR2B`); if that folder does not exist, `INPUT/GSTR2B/`, `INPUT/GSTR-2B/` or `INPUT/GSTR/`, recorded as a run note |
+
+**Run notes**: the workbook has no Assumptions sheet. Wherever this file or
+`instructions.txt` says to record or note something (an assumption, a fallback,
+a key not set, the column mapping, files used and skipped), keep it as a run
+note. Run notes go only into `run_status.json` (section 5 or 7), never into the
+workbook.
 
 Config rules:
 - Read `config.json` fresh on every run and use its values. It differs between
@@ -58,20 +64,26 @@ Config rules:
   missing, not valid JSON, lacks either value, a value is not a real MMYYYY
   month, or `from_month` is after `to_month` →
   `ERROR input.json missing or invalid`. If `config.json` also has
-  these keys, ignore them and note it on the Assumptions sheet.
+  these keys, ignore them and record a run note.
 - `input_folder` and `output_folder` are ignored: the run folder above is the input
   and section 5 is the output.
+- A key that is absent is **not set**; `itc_time_limit_reminder` not set means
+  false. List the keys that were not set in one run note.
 - A value written as a placeholder in angle brackets (e.g. `"<JOURNAL_PREFIX>"`)
   is **not set**. A list holding only placeholders is an empty list. Use the
   other criteria `instructions.txt` gives (for example transaction type
-  "Journal", negative taxable value) and note this on the Assumptions sheet.
+  "Journal", negative taxable value) and record a run note.
 - `pr_columns` may be missing or list only some columns. Use the columns it
   names; map the rest of the PR headers yourself by header name (Doc Ref, supplier GSTIN, supplier invoice no., invoice date, base,
   taxable, CGST, SGST, IGST, invoice total, transaction type, reverse charge).
-  List the mapping you used, per file, on the Assumptions sheet. If a column
-  the matching needs cannot be found, say so there and treat that value as
-  missing; never invent it.
-- Missing template → `ERROR template <name> not found`.
+  Record the mapping you used as a run note (once if every file maps the same
+  way, else per file). If a column the matching needs cannot be found, say so
+  in that note and treat that value as missing; never invent it.
+- `probable_match.upper_tolerance_absolute` and
+  `upper_tolerance_percent_of_2b_value` are not used; ignore them if present.
+  `config.thresholds` is the only amount range (see `instructions.txt` Step 3).
+- No template found that way (or several `.xlsx` in `CONFIG` and none named
+  by the config) → `ERROR template not found`.
 
 ## 4. Reconcile
 
@@ -94,9 +106,9 @@ that every run behaves the same way:
   open the copy with `data_only=True`, and confirm there is no `#REF!`, `#N/A`,
   `#VALUE!`, `#DIV/0!` or `#NAME?` and that the Summary control check is 0.
   Upload the openpyxl file, not the LibreOffice copy. If LibreOffice is not
-  available, compute the control check and totals in Python instead and write
-  "Formulas not recalculated during the run (LibreOffice unavailable)" on the
-  Assumptions sheet.
+  available, compute the control check and totals in Python instead and record
+  the run note "Formulas not recalculated during the run (LibreOffice
+  unavailable)".
 - If a verification in Step 6.4 or 7 still fails after you have rechecked your
   work, still deliver the workbook, add `_CHECK_FAILED` before `.xlsx`, and use
   status `failed` in section 5.
@@ -109,8 +121,14 @@ Outcomes in `instructions.txt` that end the run:
 
 ```bash
 python3 blob.py put 'T' 'A' 'X' work/out/<file>.xlsx
-python3 blob.py status 'T' 'A' 'X' done "DONE <file>.xlsx" "<counts line>" "<ITC line>"
+python3 blob.py status 'T' 'A' 'X' done "DONE <file>.xlsx" "<counts line>" "<ITC line>" "NOTE <run note>" ...
 ```
+
+Add each run note as one more `"NOTE …"` argument after the ITC line.
+`run_status.json` keeps at most 20 messages of 1000 characters each, so that
+leaves 17 notes: group related notes into one message (e.g. all files used and
+skipped in one, the column mapping in one), keep each under 1000 characters,
+and put the most important first.
 
 `put` accepts only an `.xlsx` name of letters, digits, spaces and `. _ ( ) -`.
 Upload exactly one workbook. Use `failed` instead of `done` if the name ends with
@@ -136,8 +154,10 @@ For `NOTHING_TO_DO …` and `ERROR …` (not for the `blob.py` results in sectio
 first record it, then reply:
 
 ```bash
-python3 blob.py status 'T' 'A' 'X' failed "<result line>" "<detail>" ...
+python3 blob.py status 'T' 'A' 'X' failed "<result line>" "<detail>" "NOTE <run note>" ...
 ```
+
+Include any run notes gathered so far, as in section 5.
 
 If that command itself fails, reply with the result line and add the
 `blob.py` line after it. Do not retry anything else.
