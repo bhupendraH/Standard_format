@@ -61,7 +61,10 @@ import requests
 _ID = re.compile(r"[A-Za-z0-9_-]+")
 _OUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,150}\.xlsx", re.I)
 _ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
-SUPPORTED_AGENT = "GSTR2B"
+# The agent id may have single spaces between words (the Blob folder is
+# "GST Reconciliation"); tenant and transaction ids may not. No '/', '.', tabs.
+_AGENT_ID = re.compile(r"[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*")
+SUPPORTED_AGENT = "GST Reconciliation"
 ENV_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID",
             "AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_CONTAINER")
 MAX_FILES = 60
@@ -283,7 +286,7 @@ def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
 
 def _write_status_blob(ids, state: str, messages, environ, factory) -> tuple:
     """Blob part of `status`: write RUN/<output>/run_status.json. Never raises."""
-    if ids[1].upper() != SUPPORTED_AGENT:
+    if not _is_supported_agent(ids[1]):
         return 5, f"UNSUPPORTED_AGENT {ids[1]}"
     for name in ENV_VARS:
         if not environ.get(name):
@@ -328,13 +331,23 @@ def _status(ids, state: str, messages, environ, factory) -> tuple:
     return code, f"{line}; NOTIFIED"
 
 
+def _ids_valid(ids) -> bool:
+    tenant, agent, txn = ids
+    return bool(_ID.fullmatch(tenant or "") and _AGENT_ID.fullmatch(agent or "")
+                and _ID.fullmatch(txn or ""))
+
+
+def _is_supported_agent(agent: str) -> bool:
+    return agent.casefold() == SUPPORTED_AGENT.casefold()
+
+
 def run(argv: list, environ: Mapping[str, str],
         make_container: Optional[Callable[[Mapping[str, str]], Any]] = None) -> tuple:
     if not argv or argv[0] not in ("pull", "put", "status"):
         return 1, USAGE
     cmd, rest = argv[0], argv[1:]
     ids, extra = rest[:3], rest[3:]
-    if len(ids) != 3 or any(_ID.fullmatch(i or "") is None for i in ids):
+    if len(ids) != 3 or not _ids_valid(ids):
         return 1, "INVALID_TRANSACTION"
     if (cmd in ("pull", "put") and len(extra) != 1) or \
             (cmd == "status" and (len(extra) < 2 or extra[0] not in ("done", "failed"))):
@@ -342,7 +355,7 @@ def run(argv: list, environ: Mapping[str, str],
     factory = make_container or globals()["make_container"]
     if cmd == "status":
         return _status(ids, extra[0], extra[1:], environ, factory)
-    if ids[1].upper() != SUPPORTED_AGENT:
+    if not _is_supported_agent(ids[1]):
         return 5, f"UNSUPPORTED_AGENT {ids[1]}"
     for name in ENV_VARS:
         if not environ.get(name):

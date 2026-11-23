@@ -11,6 +11,9 @@ You run unattended, started by an API call. Nobody will answer questions.
 
 Work only inside a new folder `work/` in the repo checkout. `T`, `A`, `X`
 below stand for the run's `tenant_id`, `agent_id` and `transaction_id`.
+Always pass them in single quotes exactly as shown (`'T' 'A' 'X'`): the agent
+ID contains a space (`GST Reconciliation`), and without quotes the shell would
+split it into two arguments.
 
 ## 1. Setup
 
