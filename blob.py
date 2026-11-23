@@ -236,13 +236,19 @@ def execution_body(execution_id: str, state: str, messages) -> dict:
             "agent_fail_reason": reason}
 
 
-def _body_status_code(resp) -> Optional[int]:
-    """The 'status_code' inside a JSON response body, if there is one."""
+def _body_status_code(resp):
+    """The 'status_code' inside a JSON response body: an int, None if there is no
+    such field (or no JSON body), or 'invalid' if it is present but not a number."""
     try:
         body = resp.json()
-        return int(body["status_code"]) if isinstance(body, dict) and "status_code" in body else None
     except Exception:
         return None
+    if not isinstance(body, dict) or "status_code" not in body:
+        return None
+    try:
+        return int(body["status_code"])
+    except (TypeError, ValueError):
+        return "invalid"
 
 
 def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
@@ -259,7 +265,8 @@ def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
         if attempt:
             sleep(2 * attempt)
         try:
-            resp = post(url, json=body, headers=headers, timeout=30)
+            # No redirects: a redirect would resend as GET and carry the key elsewhere.
+            resp = post(url, json=body, headers=headers, timeout=30, allow_redirects=False)
         except Exception as exc:
             reason = type(exc).__name__
             continue

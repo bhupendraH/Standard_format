@@ -139,9 +139,17 @@ instead of `"DONE <file>.xlsx"`.
 `update_agent_execution_log` API (`STATUS_API_URL`) with `execution_id` = `X`,
 `SUCCESS` for `done`, and `FAIL` for `failed` with the **first message** as the
 fail reason (cut to 255 characters). So the first message is always the result
-line. Its output ends `; NOTIFIED` when the backend accepted it. If it ends
-`; ERROR status API failed (…)`, report that line as it is, after your result
-line. Do not retry it or call the API any other way.
+line.
+
+Call `status` **exactly once per run**, whatever it prints. Its output is
+`<blob part>; <api part>`:
+- It ends `; NOTIFIED` when the backend accepted the update.
+- If it ends `; ERROR status API failed (…)` or
+  `; STATUS_API_URL not set, API not called`, or if the blob part is an `ERROR …`,
+  keep your result line unchanged and add the `status` line after it in the final
+  reply.
+- Never call `status` again, never switch to section 7 because of it, and never
+  call the API any other way. The backend accepts only one update per execution.
 
 ## 6. Final reply
 
@@ -170,8 +178,9 @@ python3 blob.py status 'T' 'A' 'X' failed "<result line>" "<detail>" "NOTE <run 
 The first message must be the result line: the backend shows it as the fail
 reason (first 255 characters), so keep it specific. Include any run notes
 gathered so far, as in section 5. For `NOT_FOUND` and `UNSUPPORTED_AGENT`
-there is no folder to write `run_status.json` to, so the output starts with that
-same line, followed by `; NOTIFIED`. That is expected.
+there is usually no folder to write `run_status.json` to, so the output usually
+starts with that same line. That is expected. The rules in section 5 for
+`status` output apply here too: call it once, and add its line to the reply.
 
 If that command itself fails, reply with the result line and add the
 `blob.py` line after it. Do not retry anything else.
