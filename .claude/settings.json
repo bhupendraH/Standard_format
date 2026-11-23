@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 blob.py pull:*)",
+      "Bash(python3 blob.py put:*)",
+      "Bash(python3 blob.py status:*)",
+      "Bash(bash setup.sh)"
+    ]
+  }
+}

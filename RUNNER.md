@@ -15,6 +15,12 @@ Always pass them in single quotes exactly as shown (`'T' 'A' 'X'`): the agent
 ID contains a space (`GST Reconciliation`), and without quotes the shell would
 split it into two arguments.
 
+Run `bash setup.sh` and every `python3 blob.py …` command **on its own, from the
+repo root, exactly in the form shown here**: no `cd … &&`, no pipes, no
+redirection, no `env`/`timeout` wrappers, nothing chained before or after. The
+repo's `.claude/settings.json` pre-approves exactly these command forms; any
+other form goes to the permission check and may be blocked.
+
 ## 1. Setup
 
 ```bash
