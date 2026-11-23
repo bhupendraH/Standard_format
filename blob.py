@@ -11,7 +11,12 @@ Usage:
     python3 blob.py put    <tenant> <agent> <txn> <local_file.xlsx>
         Upload the workbook to RUN/<output folder>/<file name>.
     python3 blob.py status <tenant> <agent> <txn> done|failed <message> [<message> ...]
-        Write RUN/<output folder>/run_status.json.
+        1. Write RUN/<output folder>/run_status.json (all messages), unless the
+           run folder is missing or the agent is unsupported.
+        2. Then, whatever step 1 returned, close the backend execution: POST to
+           STATUS_API_URL (update_agent_execution_log) with execution_id = <txn>,
+           SUCCESS for done, FAIL for failed with the first message (max 255
+           chars) as agent_fail_reason.
 
 <output folder> is RUN's existing output folder with its own spelling
 ("Output", "OUTPUT", ...), else "output". Reads stay inside RUN, writes stay
@@ -23,13 +28,22 @@ Environment (an Entra ID app with Storage Blob Data Contributor):
         sandbox proxy adds to requests to login.microsoftonline.com, so the run
         never sees it; set it in the shell for local use. Never printed.)
     CLAUDE_CODE_REMOTE_SESSION_ID (optional, recorded in run_status.json)
+    STATUS_API_URL (optional: the backend's update_agent_execution_log URL;
+        not set = the API is not called)
+    ROUTINE_UPDATE_KEY (optional: sent as the X-Routine-Key header to
+        STATUS_API_URL; never printed. Omit it if a network secret adds the header.)
 
 Prints exactly one line and exits with:
-    0  PULLED <n> file(s) | UPLOADED <blob path>
+    0  PULLED <n> file(s) | UPLOADED <blob path> | UPLOADED <path>; NOTIFIED
     1  INVALID_TRANSACTION | USAGE ...
     2  NOT_FOUND <RUN>
     3  ERROR <reason>
+    4  UPLOADED <path>; ERROR status API failed (<reason>)
     5  UNSUPPORTED_AGENT <agent_id>
+`status` lines are "<blob part>; <api part>", where the api part is NOTIFIED,
+"STATUS_API_URL not set, API not called" or "ERROR status API failed (...)".
+Its exit code is the blob part's (2/3/5) if that failed, else 4 if the API
+failed, else 0.
 """
 from __future__ import annotations
 
@@ -213,7 +227,61 @@ def _put(container, run: str, local_file: str) -> tuple:
     return 0, f"UPLOADED {name}"
 
 
-def _status(container, run: str, ids, state: str, messages, environ) -> tuple:
+def execution_body(execution_id: str, state: str, messages) -> dict:
+    """Body for the backend's update_agent_execution_log API."""
+    if state == "done":
+        return {"execution_id": execution_id, "agent_execution_status": "SUCCESS"}
+    reason = (messages[0] if messages else "failed")[:255]
+    return {"execution_id": execution_id, "agent_execution_status": "FAIL",
+            "agent_fail_reason": reason}
+
+
+def _body_status_code(resp) -> Optional[int]:
+    """The 'status_code' inside a JSON response body, if there is one."""
+    try:
+        body = resp.json()
+        return int(body["status_code"]) if isinstance(body, dict) and "status_code" in body else None
+    except Exception:
+        return None
+
+
+def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
+               sleep: Callable = time.sleep) -> str:
+    """POST the result to the backend. Returns '' on success, else a short reason.
+
+    Success = HTTP 2xx and, if the JSON body has a status_code, that it is 200.
+    Retries connection errors and 5xx (3 attempts). Never echoes response bodies,
+    headers or exception messages.
+    """
+    post = post or requests.post
+    reason = ""
+    for attempt in range(3):
+        if attempt:
+            sleep(2 * attempt)
+        try:
+            resp = post(url, json=body, headers=headers, timeout=30)
+        except Exception as exc:
+            reason = type(exc).__name__
+            continue
+        if 200 <= resp.status_code < 300:
+            inner = _body_status_code(resp)
+            if inner is None or inner == 200:
+                return ""
+            return f"API status_code {inner}"
+        reason = f"HTTP {resp.status_code}"
+        if resp.status_code < 500:
+            break
+    return reason
+
+
+def _write_status_blob(ids, state: str, messages, environ, factory) -> tuple:
+    """Blob part of `status`: write RUN/<output>/run_status.json. Never raises."""
+    if ids[1].upper() != SUPPORTED_AGENT:
+        return 5, f"UNSUPPORTED_AGENT {ids[1]}"
+    for name in ENV_VARS:
+        if not environ.get(name):
+            return 3, f"ERROR {name} not set"
+    run_dir = "/".join(ids)
     doc = {
         "tenant_id": ids[0], "agent_id": ids[1], "transaction_id": ids[2],
         "session_id": environ.get("CLAUDE_CODE_REMOTE_SESSION_ID", ""),
@@ -221,10 +289,36 @@ def _status(container, run: str, ids, state: str, messages, environ) -> tuple:
         "messages": [m[:1000] for m in messages[:20]],
         "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    name = f"{run}/{_existing_output_dir(container, run)}/run_status.json"
-    container.upload_blob(name, json.dumps(doc, indent=2).encode("utf-8"), overwrite=True,
-                          content_settings=_content_settings("application/json"))
-    return 0, f"UPLOADED {name}"
+    try:
+        container = factory(environ)
+        name = f"{run_dir}/{_existing_output_dir(container, run_dir)}/run_status.json"
+        container.upload_blob(name, json.dumps(doc, indent=2).encode("utf-8"), overwrite=True,
+                              content_settings=_content_settings("application/json"))
+        return 0, f"UPLOADED {name}"
+    except _Fail as exc:
+        return exc.code, exc.line
+    except Exception as exc:  # never echo str(exc)
+        return 3, azure_error_line(exc)
+
+
+def _status(ids, state: str, messages, environ, factory) -> tuple:
+    """Write run_status.json, then close the backend execution (execution_id = txn).
+
+    The API part runs whatever the Blob part returned, so the execution is closed
+    even when the run folder is missing or Blob fails.
+    """
+    code, line = _write_status_blob(ids, state, messages, environ, factory)
+    url = environ.get("STATUS_API_URL", "")
+    if not url:
+        return code, f"{line}; STATUS_API_URL not set, API not called"
+    headers = {"Accept": "application/json"}
+    key = environ.get("ROUTINE_UPDATE_KEY", "")
+    if key:
+        headers["X-Routine-Key"] = key
+    reason = notify_api(url, execution_body(ids[2], state, messages), headers)
+    if reason:
+        return (code or 4), f"{line}; ERROR status API failed ({reason})"
+    return code, f"{line}; NOTIFIED"
 
 
 def run(argv: list, environ: Mapping[str, str],
@@ -238,21 +332,21 @@ def run(argv: list, environ: Mapping[str, str],
     if (cmd in ("pull", "put") and len(extra) != 1) or \
             (cmd == "status" and (len(extra) < 2 or extra[0] not in ("done", "failed"))):
         return 1, USAGE
+    factory = make_container or globals()["make_container"]
+    if cmd == "status":
+        return _status(ids, extra[0], extra[1:], environ, factory)
     if ids[1].upper() != SUPPORTED_AGENT:
         return 5, f"UNSUPPORTED_AGENT {ids[1]}"
     for name in ENV_VARS:
         if not environ.get(name):
             return 3, f"ERROR {name} not set"
 
-    factory = make_container or globals()["make_container"]
     run_dir = "/".join(ids)
     try:
         container = factory(environ)
         if cmd == "pull":
             return _pull(container, run_dir, extra[0])
-        if cmd == "put":
-            return _put(container, run_dir, extra[0])
-        return _status(container, run_dir, ids, extra[0], extra[1:], environ)
+        return _put(container, run_dir, extra[0])
     except _Fail as exc:
         return exc.code, exc.line
     except Exception as exc:  # never echo str(exc): it may contain secrets or URLs

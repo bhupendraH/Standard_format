@@ -37,10 +37,11 @@ folder if there is one. A re-run overwrites them.
 
 ## Cloud environment
 
-- Network access: allowed domains `login.microsoftonline.com` and
-  `botiqblobuat.blob.core.windows.net`, plus "Allow package managers" (pip and
-  apt for LibreOffice).
-- Environment variables (not secrets; anyone using the environment can read them):
+- Network access: allowed domains `login.microsoftonline.com`,
+  `botiqblobuat.blob.core.windows.net` and
+  `bmagentsuat-agaca0dyaxc3d0ds.centralindia-01.azurewebsites.net` (the
+  backend API), plus "Allow package managers" (pip and apt for LibreOffice).
+- Environment variables (anyone using the environment can read them):
 
   | Variable | Value |
   |---|---|
@@ -48,6 +49,8 @@ folder if there is one. A re-run overwrites them.
   | `AZURE_CLIENT_ID` | the app's client ID |
   | `AZURE_STORAGE_ACCOUNT` | `botiqblobuat` |
   | `AZURE_STORAGE_CONTAINER` | `standardize-test` |
+  | `STATUS_API_URL` | `https://bmagentsuat-agaca0dyaxc3d0ds.centralindia-01.azurewebsites.net/api/update_agent_execution_log` |
+  | `ROUTINE_UPDATE_KEY` | the backend's routine key, sent as the `X-Routine-Key` header (a secret: readable by anyone using the environment; `blob.py` never prints it) |
 
 - **Client secret: a network secret only**, for `login.microsoftonline.com`.
   Do not add `AZURE_CLIENT_SECRET` as an environment variable. `blob.py` sends
@@ -57,6 +60,33 @@ folder if there is one. A re-run overwrites them.
 
 - The app needs the **Storage Blob Data Contributor** role on the storage
   account or container, otherwise runs fail with `AuthorizationPermissionMismatch`.
+
+## Backend execution update
+
+Every run except `INVALID_TRANSACTION` ends with `blob.py status`, which closes
+the run's execution in the backend:
+
+```
+POST $STATUS_API_URL
+X-Routine-Key: $ROUTINE_UPDATE_KEY
+Content-Type: application/json
+
+{"execution_id": "<transaction_id>", "agent_execution_status": "SUCCESS"}
+{"execution_id": "<transaction_id>", "agent_execution_status": "FAIL",
+ "agent_fail_reason": "<result line, max 255 chars>"}
+```
+
+- `DONE` → `SUCCESS`; every other result line → `FAIL` with that line as the
+  reason.
+- Accepted = HTTP 2xx and, if the response body has `status_code`, it is 200.
+  Connection errors and 5xx are retried (3 attempts); 4xx is not.
+- Counts, ITC totals and run notes are not in this call; they stay in
+  `output/run_status.json` in Blob.
+- `STATUS_API_URL` not set → the API is not called (the run still finishes).
+- The backend should time out executions left `INITIATED`: a run that never
+  starts, or dies before `status`, sends nothing.
+- If the routine key has been shared anywhere (chat, screenshots), ask the
+  backend team for a new one.
 
 ## Saved prompt
 
@@ -80,16 +110,17 @@ inspect environment variables.
 ## Result lines
 
 The session's final reply starts with one of these lines; `run_status.json`
-records the same line.
+records the same line, and the backend gets `SUCCESS` for `DONE` and `FAIL`
+(with the line as the reason) for all others except `INVALID_TRANSACTION`.
 
 | Line | Meaning |
 |---|---|
 | `DONE <file>` | workbook uploaded, checks passed |
 | `CHECK_FAILED <file>` | workbook uploaded (name ends `_CHECK_FAILED`), a verification failed |
 | `NOTHING_TO_DO <reason>` | no PR or GSTR-2B files for the month range in input.json |
-| `NOT_FOUND <tenant>/<agent>/<txn>` | run folder empty or missing (no `run_status.json` written) |
-| `UNSUPPORTED_AGENT <agent_id>` | only `GSTR2B` is handled; Blob not touched |
-| `INVALID_TRANSACTION` | payload is not three IDs of letters, digits, `-`, `_` |
+| `NOT_FOUND <tenant>/<agent>/<txn>` | run folder empty or missing (no `run_status.json` written; backend still gets `FAIL`) |
+| `UNSUPPORTED_AGENT <agent_id>` | only `GSTR2B` is handled; Blob not touched; backend still gets `FAIL` |
+| `INVALID_TRANSACTION` | payload is not three IDs of letters, digits, `-`, `_`; nothing is called |
 | `ERROR <reason>` | config, input.json or template missing or invalid, GSTIN differs between months, Azure error (type/status/code only) |
 
 ## Fire call (Postman)
