@@ -1,6 +1,6 @@
 """Blob I/O for one GSTR-2B reconciliation run, limited to that run's folder.
 
-The run folder is <tenant_id>/<agent_id>/<transaction_id>/ (called RUN).
+The run folder is <tenant_id>/<agent_name>/<transaction_id>/ (called RUN).
 Claude does the reconciliation; this script is its only way to reach Blob.
 
 Usage:
@@ -10,49 +10,41 @@ Usage:
         new or empty.
     python3 blob.py put    <tenant> <agent> <txn> <local_file.xlsx>
         Upload the workbook to RUN/<output folder>/<file name>.
-    python3 blob.py status <tenant> <agent> <txn> done|failed <message> [<message> ...]
-        1. Write RUN/<output folder>/run_status.json (all messages), unless the
-           run folder is missing or the agent is unsupported.
-        2. Then, whatever step 1 returned, close the backend execution: POST to
-           STATUS_API_URL (update_agent_execution_log) with execution_id = <txn>,
-           SUCCESS for done, FAIL for failed with the first message (max 255
-           chars) as agent_fail_reason.
+    python3 blob.py status <tenant> <agent> <txn> done|failed <result message>
+        Close the backend execution: POST to STATUS_API_URL
+        (update_agent_execution_log) with execution_id = <txn>, SUCCESS for
+        done, FAIL for failed with the result message (max 255 chars) as
+        agent_fail_reason. Does not touch Blob. Any further arguments are ignored.
 
 <output folder> is RUN's existing output folder with its own spelling
-("Output", "OUTPUT", ...), else "output". Reads stay inside RUN, writes stay
-inside its output folder; nothing is ever deleted.
+("Output", "OUTPUT", ...), else "output". Reads stay inside RUN, the only write
+is the workbook into its output folder; nothing is ever deleted.
 
 Environment (an Entra ID app with Storage Blob Data Contributor):
     AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_STORAGE_ACCOUNT, AZURE_STORAGE_CONTAINER
     AZURE_CLIENT_SECRET (optional: in the cloud it is a network secret that the
         sandbox proxy adds to requests to login.microsoftonline.com, so the run
         never sees it; set it in the shell for local use. Never printed.)
-    CLAUDE_CODE_REMOTE_SESSION_ID (optional, recorded in run_status.json)
     STATUS_API_URL (optional: the backend's update_agent_execution_log URL;
         not set = the API is not called)
     ROUTINE_UPDATE_KEY (optional: sent as the X-Routine-Key header to
         STATUS_API_URL; never printed. Omit it if a network secret adds the header.)
 
 Prints exactly one line and exits with:
-    0  PULLED <n> file(s) | UPLOADED <blob path> | UPLOADED <path>; NOTIFIED
+    0  PULLED <n> file(s) | UPLOADED <blob path> | NOTIFIED
+       | STATUS_API_URL not set, API not called
     1  INVALID_TRANSACTION | USAGE ...
     2  NOT_FOUND <RUN>
     3  ERROR <reason>
-    4  UPLOADED <path>; ERROR status API failed (<reason>)
-    5  UNSUPPORTED_AGENT <agent_id>
-`status` lines are "<blob part>; <api part>", where the api part is NOTIFIED,
-"STATUS_API_URL not set, API not called" or "ERROR status API failed (...)".
-Its exit code is the blob part's (2/3/5) if that failed, else 4 if the API
-failed, else 0.
+    4  ERROR status API failed (<reason>)
+    5  UNSUPPORTED_AGENT <agent_name>
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
@@ -61,9 +53,9 @@ import requests
 _ID = re.compile(r"[A-Za-z0-9_-]+")
 _OUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,150}\.xlsx", re.I)
 _ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
-# The agent id may have single spaces between words (the Blob folder is
+# The agent name may have single spaces between words (the Blob folder is
 # "GST Reconciliation"); tenant and transaction ids may not. No '/', '.', tabs.
-_AGENT_ID = re.compile(r"[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*")
+_AGENT_NAME = re.compile(r"[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*")
 SUPPORTED_AGENT = "GST Reconciliation"
 ENV_VARS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID",
             "AZURE_STORAGE_ACCOUNT", "AZURE_STORAGE_CONTAINER")
@@ -71,7 +63,7 @@ MAX_FILES = 60
 MAX_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-USAGE = "USAGE blob.py pull|put|status <tenant_id> <agent_id> <transaction_id> ..."
+USAGE = "USAGE blob.py pull|put|status <tenant_id> <agent_name> <transaction_id> ..."
 
 
 class _Fail(Exception):
@@ -230,11 +222,11 @@ def _put(container, run: str, local_file: str) -> tuple:
     return 0, f"UPLOADED {name}"
 
 
-def execution_body(execution_id: str, state: str, messages) -> dict:
+def execution_body(execution_id: str, state: str, result_line: str) -> dict:
     """Body for the backend's update_agent_execution_log API."""
     if state == "done":
         return {"execution_id": execution_id, "agent_execution_status": "SUCCESS"}
-    reason = (messages[0] if messages else "failed")[:255]
+    reason = (result_line or "failed")[:255]
     return {"execution_id": execution_id, "agent_execution_status": "FAIL",
             "agent_fail_reason": reason}
 
@@ -284,56 +276,25 @@ def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
     return reason
 
 
-def _write_status_blob(ids, state: str, messages, environ, factory) -> tuple:
-    """Blob part of `status`: write RUN/<output>/run_status.json. Never raises."""
-    if not _is_supported_agent(ids[1]):
-        return 5, f"UNSUPPORTED_AGENT {ids[1]}"
-    for name in ENV_VARS:
-        if not environ.get(name):
-            return 3, f"ERROR {name} not set"
-    run_dir = "/".join(ids)
-    doc = {
-        "tenant_id": ids[0], "agent_id": ids[1], "transaction_id": ids[2],
-        "session_id": environ.get("CLAUDE_CODE_REMOTE_SESSION_ID", ""),
-        "status": state,
-        "messages": [m[:1000] for m in messages[:20]],
-        "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-    try:
-        container = factory(environ)
-        name = f"{run_dir}/{_existing_output_dir(container, run_dir)}/run_status.json"
-        container.upload_blob(name, json.dumps(doc, indent=2).encode("utf-8"), overwrite=True,
-                              content_settings=_content_settings("application/json"))
-        return 0, f"UPLOADED {name}"
-    except _Fail as exc:
-        return exc.code, exc.line
-    except Exception as exc:  # never echo str(exc)
-        return 3, azure_error_line(exc)
-
-
-def _status(ids, state: str, messages, environ, factory) -> tuple:
-    """Write run_status.json, then close the backend execution (execution_id = txn).
-
-    The API part runs whatever the Blob part returned, so the execution is closed
-    even when the run folder is missing or Blob fails.
-    """
-    code, line = _write_status_blob(ids, state, messages, environ, factory)
+def _status(ids, state: str, result_line: str, environ) -> tuple:
+    """Close the backend execution (execution_id = txn). Does not touch Blob, so
+    it also works when the run folder is missing or the agent is unsupported."""
     url = environ.get("STATUS_API_URL", "")
     if not url:
-        return code, f"{line}; STATUS_API_URL not set, API not called"
+        return 0, "STATUS_API_URL not set, API not called"
     headers = {"Accept": "application/json"}
     key = environ.get("ROUTINE_UPDATE_KEY", "")
     if key:
         headers["X-Routine-Key"] = key
-    reason = notify_api(url, execution_body(ids[2], state, messages), headers)
+    reason = notify_api(url, execution_body(ids[2], state, result_line), headers)
     if reason:
-        return (code or 4), f"{line}; ERROR status API failed ({reason})"
-    return code, f"{line}; NOTIFIED"
+        return 4, f"ERROR status API failed ({reason})"
+    return 0, "NOTIFIED"
 
 
 def _ids_valid(ids) -> bool:
     tenant, agent, txn = ids
-    return bool(_ID.fullmatch(tenant or "") and _AGENT_ID.fullmatch(agent or "")
+    return bool(_ID.fullmatch(tenant or "") and _AGENT_NAME.fullmatch(agent or "")
                 and _ID.fullmatch(txn or ""))
 
 
@@ -352,9 +313,9 @@ def run(argv: list, environ: Mapping[str, str],
     if (cmd in ("pull", "put") and len(extra) != 1) or \
             (cmd == "status" and (len(extra) < 2 or extra[0] not in ("done", "failed"))):
         return 1, USAGE
-    factory = make_container or globals()["make_container"]
     if cmd == "status":
-        return _status(ids, extra[0], extra[1:], environ, factory)
+        return _status(ids, extra[0], extra[1], environ)
+    factory = make_container or globals()["make_container"]
     if not _is_supported_agent(ids[1]):
         return 5, f"UNSUPPORTED_AGENT {ids[1]}"
     for name in ENV_VARS:

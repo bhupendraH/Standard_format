@@ -10,9 +10,9 @@ You run unattended, started by an API call. Nobody will answer questions.
   **this file wins**.
 
 Work only inside a new folder `work/` in the repo checkout. `T`, `A`, `X`
-below stand for the run's `tenant_id`, `agent_id` and `transaction_id`.
+below stand for the run's `tenant_id`, `agent_name` and `transaction_id`.
 Always pass them in single quotes exactly as shown (`'T' 'A' 'X'`): the agent
-ID contains a space (`GST Reconciliation`), and without quotes the shell would
+name contains a space (`GST Reconciliation`), and without quotes the shell would
 split it into two arguments.
 
 Run `bash setup.sh` and every `python3 blob.py …` command **on its own, from the
@@ -28,7 +28,8 @@ bash setup.sh
 ```
 
 It prints `SETUP OK (LibreOffice available)` or `SETUP OK (LibreOffice NOT available)`.
-Remember which one. If it fails, finish with `ERROR setup failed` (section 7).
+Remember which one. If it fails → **Setup failed** (section 6), and stop as in
+section 7.
 
 ## 2. Download the run folder
 
@@ -40,10 +41,11 @@ This copies everything in `T/A/X/` except its output folder into `work/run/`,
 keeping folder names and the blob modified times. `blob.py` is your **only**
 way to reach Blob: never call Azure, `curl` storage or read credentials yourself.
 
-`blob.py` prints one line. Anything other than `PULLED <n> file(s)` → finish
-with that line as the result (section 7). This includes `NOT_FOUND …` and
-`UNSUPPORTED_AGENT …`: they still go through section 7 so the backend
-execution is closed. Only `INVALID_TRANSACTION` skips section 7.
+`blob.py` prints one line. Anything other than `PULLED <n> file(s)` → stop as
+in section 7 with the matching result message from section 6 (e.g.
+`NOT_FOUND …` → **Not found**, `UNSUPPORTED_AGENT …` → **Unsupported agent**),
+and put the `blob.py` line in the `Detail:` line. They still go through
+section 7 so the backend execution is closed.
 
 ## 3. Find the files (folder and file names: ignore case)
 
@@ -60,19 +62,21 @@ execution is closed. Only `INVALID_TRANSACTION` skips section 7.
 **Run notes**: the workbook has no Assumptions sheet. Wherever this file or
 `instructions.txt` says to record or note something (an assumption, a fallback,
 a key not set, the column mapping, files used and skipped), keep it as a run
-note. Run notes go only into `run_status.json` (section 5 or 7), never into the
+note. Run notes go only into the final reply (section 6), never into the
 workbook.
 
 Config rules:
 - Read `config.json` fresh on every run and use its values. It differs between
   transactions; never reuse values from another run, from `instructions.txt`
   examples or from this repo.
-- Invalid JSON or a missing config → `ERROR config.json missing or invalid`.
-  Do not guess values.
+- Invalid JSON or a missing config → **Config invalid**. Do not guess values.
+
+The bold names in this file (e.g. **Config invalid**) are result messages in
+section 6. All of them except **Completed** and **Check failed** end the run
+early, as in section 7.
 - `from_month` and `to_month` come **only** from `input.json`. If it is
   missing, not valid JSON, lacks either value, a value is not a real MMYYYY
-  month, or `from_month` is after `to_month` →
-  `ERROR input.json missing or invalid`. If `config.json` also has
+  month, or `from_month` is after `to_month` → **Period invalid**. If `config.json` also has
   these keys, ignore them and record a run note.
 - `input_folder` and `output_folder` are ignored: the run folder above is the input
   and section 5 is the output.
@@ -92,7 +96,7 @@ Config rules:
   `upper_tolerance_percent_of_2b_value` are not used; ignore them if present.
   `config.thresholds` is the only amount range (see `instructions.txt` Step 3).
 - No template found that way (or several `.xlsx` in `CONFIG` and none named
-  by the config) → `ERROR template not found`.
+  by the config) → **Template missing**.
 
 ## 4. Reconcile
 
@@ -122,77 +126,96 @@ that every run behaves the same way:
   work, still deliver the workbook, add `_CHECK_FAILED` before `.xlsx`, and use
   status `failed` in section 5.
 
-Outcomes in `instructions.txt` that end the run:
-- No files at all for the range (Step 1.5) → `NOTHING_TO_DO no PR or GSTR-2B files for <from>-<to>`
-- GSTR-2B GSTIN differs between months (Step 1.6) → `ERROR GSTR-2B GSTIN differs between months`
+Outcomes in `instructions.txt` that end the run (section 7, messages in section 6):
+- No files at all for the range (Step 1.5) → **No files**
+- GSTR-2B GSTIN differs between months (Step 1.6) → **GSTIN differs**
 
 ## 5. Deliver
 
 ```bash
 python3 blob.py put 'T' 'A' 'X' work/out/<file>.xlsx
-python3 blob.py status 'T' 'A' 'X' done "DONE <file>.xlsx" "<counts line>" "<ITC line>" "NOTE <run note>" ...
+python3 blob.py status 'T' 'A' 'X' done "Reconciliation completed for <period>. Report: <file>.xlsx"
 ```
 
-Add each run note as one more `"NOTE …"` argument after the ITC line.
-`run_status.json` keeps at most 20 messages of 1000 characters each, so that
-leaves 17 notes: group related notes into one message (e.g. all files used and
-skipped in one, the column mapping in one), keep each under 1000 characters,
-and put the most important first.
-
 `put` accepts only an `.xlsx` name of letters, digits, spaces and `. _ ( ) -`.
-Upload exactly one workbook. If the name ends with `_CHECK_FAILED`, use
-`failed` instead of `done` and make the first message `"CHECK_FAILED <file>.xlsx"`
-instead of `"DONE <file>.xlsx"`.
+Upload exactly one workbook. If `put` prints anything other than
+`UPLOADED …`, stop as in section 7 with the matching message from section 6.
+If the name ends with `_CHECK_FAILED`, use `failed` instead of `done` and the
+**Check failed** message instead of **Completed**.
 
-`status` also closes this run's execution in the backend: it calls the
+`status` takes exactly one message, the result message from section 6, and
+closes this run's execution in the backend: it calls the
 `update_agent_execution_log` API (`STATUS_API_URL`) with `execution_id` = `X`,
-`SUCCESS` for `done`, and `FAIL` for `failed` with the **first message** as the
-fail reason (cut to 255 characters). So the first message is always the result
-line.
+`SUCCESS` for `done`, and `FAIL` for `failed` with the result message as the
+fail reason (cut to 255 characters). It writes nothing to Blob. Counts, ITC
+totals and run notes go only in the final reply (section 6).
 
-Call `status` **exactly once per run**, whatever it prints. Its output is
-`<blob part>; <api part>`:
-- It ends `; NOTIFIED` when the backend accepted the update.
-- If it ends `; ERROR status API failed (…)` or
-  `; STATUS_API_URL not set, API not called`, or if the blob part is an `ERROR …`,
-  keep your result line unchanged and add the `status` line after it in the final
-  reply.
+Call `status` **exactly once per run**, whatever it prints:
+- It prints `NOTIFIED` when the backend accepted the update.
+- If it prints `ERROR status API failed (…)` or
+  `STATUS_API_URL not set, API not called`, keep your result message unchanged
+  and add the `status` line at the end of the final reply.
 - Never call `status` again, never switch to section 7 because of it, and never
   call the API any other way. The backend accepts only one update per execution.
 
-## 6. Final reply
+## 6. Result messages and final reply
 
-Line 1 is the result line, exactly one of:
+Every run ends with exactly one **result message** from this table. It is what
+the backend shows people (for `failed`), so it is plain English. Use the text
+**exactly as written**, only filling in the placeholders. Never put IDs, paths,
+error codes or `blob.py` output in it; those go on the `Detail:` line below.
 
-| Result line | When |
-|---|---|
-| `DONE <file name>` | the workbook was uploaded and all checks passed |
-| `CHECK_FAILED <file name>` | the workbook was uploaded but a check failed |
-| `NOTHING_TO_DO <reason>` | no input files for the range |
-| `NOT_FOUND <T/A/X>` / `UNSUPPORTED_AGENT <A>` / `INVALID_TRANSACTION` | from `blob.py` |
-| `ERROR <reason>` | anything else that stopped the run |
+Placeholders:
+- `{period}`: the months from `input.json` as month name and year, e.g.
+  `Feb 2025 to Apr 2025`; just `Feb 2025` when both are the same month.
+- `{file}`: the uploaded workbook's file name (no folder).
+- `{agent}`: `A` exactly as received.
 
-After line 1, at most 6 lines, as in "FINAL REPLY" of `instructions.txt`.
+| Situation | `status` | Result message |
+|---|---|---|
+| **Completed**: workbook uploaded, all checks passed | `done` | `Reconciliation completed for {period}. Report: {file}` |
+| **Check failed**: workbook uploaded, name ends `_CHECK_FAILED` | `failed` | `Reconciliation completed for {period}, but some final checks did not pass. Please review the report before using it: {file}` |
+| **No files**: no PR or GSTR-2B files for the range (Step 1.5) | `failed` | `No Purchase Register or GSTR-2B files were found for {period}. Please upload the files and run again.` |
+| **Not found**: `blob.py` printed `NOT_FOUND …` | `failed` | `The files for this request could not be found. Please upload them and run again.` |
+| **Unsupported agent**: `blob.py` printed `UNSUPPORTED_AGENT …` | `failed` | `This request was for "{agent}", which this runner does not handle. Only GST Reconciliation is supported.` |
+| **Config invalid** (section 3) | `failed` | `The configuration file (config.json) is missing or could not be read.` |
+| **Period invalid** (section 3) | `failed` | `The period file (input.json) is missing, or its from/to month is not valid.` |
+| **Template missing** (section 3) | `failed` | `The output template was not found in the config folder.` |
+| **GSTIN differs** (Step 1.6) | `failed` | `The GSTR-2B files are not all for the same GSTIN. Please check that every month belongs to the same entity.` |
+| **Too many files**: `blob.py` printed `ERROR too many files …` or `ERROR inputs too large …` | `failed` | `Too many files were uploaded (limit 60) or they are too large in total (limit 200 MB).` |
+| **Bad file name**: `blob.py` printed `ERROR unsafe blob name …` | `failed` | `One of the uploaded file or folder names cannot be processed. Please rename it and upload again.` |
+| **Output name not allowed**: `blob.py put` printed `ERROR output name not allowed …` | `failed` | `The output file name set in config.json (output_file_pattern) is not allowed. Use only letters, digits, spaces and . _ ( ) -` |
+| **Storage error**: any other `ERROR …` from `blob.py pull` or `put` (e.g. `TokenError`, `HttpResponseError`, a setting not set) | `failed` | `Could not connect to file storage. Please contact support.` |
+| **Setup failed** (section 1) | `failed` | `The run could not start because of a system problem. Please try again later or contact support.` |
+| **Unexpected**: anything else that stops the run | `failed` | `The reconciliation could not be completed because of an unexpected problem. Please contact support.` |
+
+The final reply is:
+1. Line 1: the result message.
+2. For every situation except **Completed** and **Check failed**: one line
+   `Detail: <what went wrong>`, with the exact `blob.py` line or the specific
+   reason (e.g. which config key was invalid). This is for support, not users.
+3. For **Completed** and **Check failed**: at most 6 lines, as in "FINAL REPLY"
+   of `instructions.txt` (for **Check failed**, say which check failed).
+4. The run notes, one per line, each starting `NOTE `: group related notes
+   into one line (e.g. all files used and skipped in one, the column mapping
+   in one) and put the most important first.
+5. The `status` line, if it was not `NOTIFIED` (section 5).
 
 ## 7. When the run stops early
 
-For every early stop (`NOTHING_TO_DO …`, `ERROR …`, `NOT_FOUND …`,
-`UNSUPPORTED_AGENT …`), but never for `INVALID_TRANSACTION`, first record it,
-then reply:
+For every early stop, pick the result message from section 6 and run:
 
 ```bash
-python3 blob.py status 'T' 'A' 'X' failed "<result line>" "<detail>" "NOTE <run note>" ...
+python3 blob.py status 'T' 'A' 'X' failed "<result message>"
 ```
 
-The first message must be the result line: the backend shows it as the fail
-reason (first 255 characters), so keep it specific. Include any run notes
-gathered so far, as in section 5. For `NOT_FOUND` and `UNSUPPORTED_AGENT`
-there is usually no folder to write `run_status.json` to, so the output usually
-starts with that same line. That is expected. The rules in section 5 for
-`status` output apply here too: call it once, and add its line to the reply.
+The backend shows the result message as the fail reason. Put the `Detail:`
+line and any run notes gathered so far in the final reply (section 6), not in
+this command. The rules in section 5 for `status` output apply here too: call
+it once, and add its line to the reply if it is not `NOTIFIED`.
 
-If that command itself fails, reply with the result line and add the
-`blob.py` line after it. Do not retry anything else.
+If that command itself fails, reply as in section 6 and add the `blob.py` line
+at the end. Do not retry anything else.
 
 ## 8. Rules
 
