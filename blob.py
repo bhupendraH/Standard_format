@@ -10,11 +10,13 @@ Usage:
         new or empty.
     python3 blob.py put    <tenant> <agent> <txn> <local_file.xlsx>
         Upload the workbook to RUN/<output folder>/<file name>.
-    python3 blob.py status <tenant> <agent> <txn> done|failed <result message>
+    python3 blob.py status <tenant> <agent> <txn> done|failed <credit_used> <result message>
         Close the backend execution: POST to STATUS_API_URL
         (update_agent_execution_log) with execution_id = <txn>, SUCCESS for
         done, FAIL for failed with the result message (max 255 chars) as
-        agent_fail_reason. Does not touch Blob. Any further arguments are ignored.
+        agent_fail_reason, and credit_used = <credit_used> (the number of
+        months reconciled, a whole number 0-12 written plainly) in both.
+        Does not touch Blob. Any further arguments are ignored.
 
 <output folder> is RUN's existing output folder with its own spelling
 ("Output", "OUTPUT", ...), else "output". Reads stay inside RUN, the only write
@@ -53,6 +55,7 @@ import requests
 _ID = re.compile(r"[A-Za-z0-9_-]+")
 _OUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,150}\.xlsx", re.I)
 _ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
+_CREDIT = re.compile(r"[0-9]|1[0-2]")  # credit_used: 0-12, ASCII digits, no sign/zero-padding
 # The agent name may have single spaces between words (the Blob folder is
 # "GST Reconciliation"); tenant and transaction ids may not. No '/', '.', tabs.
 _AGENT_NAME = re.compile(r"[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*")
@@ -63,7 +66,8 @@ MAX_FILES = 60
 MAX_BYTES = 200 * 1024 * 1024
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-USAGE = "USAGE blob.py pull|put|status <tenant_id> <agent_name> <transaction_id> ..."
+USAGE = ("USAGE blob.py pull|put <tenant_id> <agent_name> <transaction_id> <path> | "
+         "status <tenant_id> <agent_name> <transaction_id> done|failed <credit_used 0-12> <message>")
 
 
 class _Fail(Exception):
@@ -222,13 +226,14 @@ def _put(container, run: str, local_file: str) -> tuple:
     return 0, f"UPLOADED {name}"
 
 
-def execution_body(execution_id: str, state: str, result_line: str) -> dict:
+def execution_body(execution_id: str, state: str, result_line: str, credit_used: int) -> dict:
     """Body for the backend's update_agent_execution_log API."""
     if state == "done":
-        return {"execution_id": execution_id, "agent_execution_status": "SUCCESS"}
+        return {"execution_id": execution_id, "agent_execution_status": "SUCCESS",
+                "credit_used": credit_used}
     reason = (result_line or "failed")[:255]
     return {"execution_id": execution_id, "agent_execution_status": "FAIL",
-            "agent_fail_reason": reason}
+            "agent_fail_reason": reason, "credit_used": credit_used}
 
 
 def _body_status_code(resp):
@@ -276,7 +281,7 @@ def notify_api(url: str, body: dict, headers: dict, post: Callable = None,
     return reason
 
 
-def _status(ids, state: str, result_line: str, environ) -> tuple:
+def _status(ids, state: str, credit_used: int, result_line: str, environ) -> tuple:
     """Close the backend execution (execution_id = txn). Does not touch Blob, so
     it also works when the run folder is missing or the agent is unsupported."""
     url = environ.get("STATUS_API_URL", "")
@@ -286,7 +291,7 @@ def _status(ids, state: str, result_line: str, environ) -> tuple:
     key = environ.get("ROUTINE_UPDATE_KEY", "")
     if key:
         headers["X-Routine-Key"] = key
-    reason = notify_api(url, execution_body(ids[2], state, result_line), headers)
+    reason = notify_api(url, execution_body(ids[2], state, result_line, credit_used), headers)
     if reason:
         return 4, f"ERROR status API failed ({reason})"
     return 0, "NOTIFIED"
@@ -311,10 +316,11 @@ def run(argv: list, environ: Mapping[str, str],
     if len(ids) != 3 or not _ids_valid(ids):
         return 1, "INVALID_TRANSACTION"
     if (cmd in ("pull", "put") and len(extra) != 1) or \
-            (cmd == "status" and (len(extra) < 2 or extra[0] not in ("done", "failed"))):
+            (cmd == "status" and (len(extra) < 3 or extra[0] not in ("done", "failed")
+                                  or not _CREDIT.fullmatch(extra[1]))):
         return 1, USAGE
     if cmd == "status":
-        return _status(ids, extra[0], extra[1], environ)
+        return _status(ids, extra[0], int(extra[1]), extra[2], environ)
     factory = make_container or globals()["make_container"]
     if not _is_supported_agent(ids[1]):
         return 5, f"UNSUPPORTED_AGENT {ids[1]}"
