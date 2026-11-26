@@ -72,17 +72,22 @@ POST $STATUS_API_URL
 X-Routine-Key: $ROUTINE_UPDATE_KEY
 Content-Type: application/json
 
-{"execution_id": "<transaction_id>", "agent_execution_status": "SUCCESS"}
+{"execution_id": "<transaction_id>", "agent_execution_status": "SUCCESS",
+ "credit_used": <0-12>}
 {"execution_id": "<transaction_id>", "agent_execution_status": "FAIL",
- "agent_fail_reason": "<result message, max 255 chars>"}
+ "agent_fail_reason": "<result message, max 255 chars>", "credit_used": <0-12>}
 ```
+
+- `credit_used` = months reconciled with both a Purchase Register and a
+  GSTR-2B file (also sent when final checks failed but a report was
+  delivered); `0` for runs that stop early. The period is capped at 12 months.
 
 - A completed run → `SUCCESS` (no message is sent); every other outcome →
   `FAIL` with its plain-English result message as the reason.
 - Accepted = HTTP 2xx and, if the response body has `status_code`, it is 200.
   Connection errors and 5xx are retried (3 attempts); 4xx is not.
-- Counts, ITC totals and run notes are not in this call; they are only in the
-  session's final reply.
+- Apart from `credit_used`, counts, ITC totals and run notes are not in this
+  call; they are only in the session's final reply.
 - `STATUS_API_URL` not set → the API is not called (the run still finishes).
 - The backend should time out executions left `INITIATED`: a run that never
   starts, or dies before `status`, sends nothing.
