@@ -151,7 +151,8 @@ Upload exactly one workbook. If `put` prints anything other than
 If the name ends with `_CHECK_FAILED`, use `failed` instead of `done` and the
 **Check failed** message instead of **Completed**.
 
-`status` takes exactly one message, the result message from section 6, and
+`status` takes the `credit_used` count and exactly one message, the result
+message from section 6, and
 closes this run's execution in the backend: it calls the
 `update_agent_execution_log` API (`STATUS_API_URL`) with `execution_id` = `X`,
 `SUCCESS` for `done`, and `FAIL` for `failed` with the result message as the
@@ -159,7 +160,8 @@ fail reason (cut to 255 characters), and sends `credit_used` with both. It
 writes nothing to Blob. Other counts, ITC totals and run notes go only in the
 final reply (section 6).
 
-Call `status` **exactly once per run**, whatever it prints:
+Call `status` **exactly once per run** (the only exception is the single
+`USAGE` re-run below), whatever it prints:
 - It prints `NOTIFIED` when the backend accepted the update.
 - If it prints `ERROR status API failed (…)` or
   `STATUS_API_URL not set, API not called`, keep your result message unchanged
@@ -192,7 +194,7 @@ Placeholders:
 | **Not found**: `blob.py` printed `NOT_FOUND …` | `failed` | `The files for this request could not be found. Please upload them and run again.` |
 | **Unsupported agent**: `blob.py` printed `UNSUPPORTED_AGENT …` | `failed` | `This request was for "{agent}", which this runner does not handle. Only GST Reconciliation is supported.` |
 | **Config invalid** (section 3) | `failed` | `The configuration file (config.json) is missing or could not be read.` |
-| **Period invalid** (section 3) | `failed` | `The period file (input.json) is missing, or its from/to month is not valid.` |
+| **Period invalid** (section 3) | `failed` | `The period file (input.json) is missing, its from/to month is not valid, or the period is longer than 12 months.` |
 | **Template missing** (section 3) | `failed` | `The output template was not found in the config folder.` |
 | **GSTIN differs** (Step 1.6) | `failed` | `The GSTR-2B files are not all for the same GSTIN. Please check that every month belongs to the same entity.` |
 | **Too many files**: `blob.py` printed `ERROR too many files …` or `ERROR inputs too large …` | `failed` | `Too many files were uploaded (limit 60) or they are too large in total (limit 200 MB).` |
@@ -226,7 +228,8 @@ Early stops always send `0` as `credit_used`: no report was delivered. The
 backend shows the result message as the fail reason. Put the `Detail:`
 line and any run notes gathered so far in the final reply (section 6), not in
 this command. The rules in section 5 for `status` output apply here too: call
-it once, and add its line to the reply if it is not `NOTIFIED`.
+it once (plus the single `USAGE` re-run allowed there), and add its line to
+the reply if it is not `NOTIFIED`.
 
 If that command itself fails, reply as in section 6 and add the `blob.py` line
 at the end. Do not retry anything else.
