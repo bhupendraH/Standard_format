@@ -76,7 +76,9 @@ section 6. All of them except **Completed** and **Check failed** end the run
 early, as in section 7.
 - `from_month` and `to_month` come **only** from `input.json`. If it is
   missing, not valid JSON, lacks either value, a value is not a real MMYYYY
-  month, or `from_month` is after `to_month` → **Period invalid**. If `config.json` also has
+  month, `from_month` is after `to_month`, or the range covers more than 12
+  months (both ends count: `042024` to `032025` is 12 months and valid) →
+  **Period invalid**. If `config.json` also has
   these keys, ignore them and record a run note.
 - `input_folder` and `output_folder` are ignored: the run folder above is the input
   and section 5 is the output.
@@ -134,8 +136,14 @@ Outcomes in `instructions.txt` that end the run (section 7, messages in section 
 
 ```bash
 python3 blob.py put 'T' 'A' 'X' work/out/<file>.xlsx
-python3 blob.py status 'T' 'A' 'X' done "Reconciliation completed for <period>. Report: <file>.xlsx"
+python3 blob.py status 'T' 'A' 'X' done <credit_used> "Reconciliation completed for <period>. Report: <file>.xlsx"
 ```
+
+`<credit_used>` is the number of months in `from_month..to_month` that had
+both a Purchase Register file and a GSTR-2B file and were reconciled. Months
+with only one of the two, or marked "2B not provided", do not count. Write it
+as a plain whole number from `0` to `12` (e.g. `3`). Use the same count for
+**Completed** and **Check failed**.
 
 `put` accepts only an `.xlsx` name of letters, digits, spaces and `. _ ( ) -`.
 Upload exactly one workbook. If `put` prints anything other than
@@ -147,16 +155,21 @@ If the name ends with `_CHECK_FAILED`, use `failed` instead of `done` and the
 closes this run's execution in the backend: it calls the
 `update_agent_execution_log` API (`STATUS_API_URL`) with `execution_id` = `X`,
 `SUCCESS` for `done`, and `FAIL` for `failed` with the result message as the
-fail reason (cut to 255 characters). It writes nothing to Blob. Counts, ITC
-totals and run notes go only in the final reply (section 6).
+fail reason (cut to 255 characters), and sends `credit_used` with both. It
+writes nothing to Blob. Other counts, ITC totals and run notes go only in the
+final reply (section 6).
 
 Call `status` **exactly once per run**, whatever it prints:
 - It prints `NOTIFIED` when the backend accepted the update.
 - If it prints `ERROR status API failed (…)` or
   `STATUS_API_URL not set, API not called`, keep your result message unchanged
   and add the `status` line at the end of the final reply.
-- Never call `status` again, never switch to section 7 because of it, and never
-  call the API any other way. The backend accepts only one update per execution.
+- If it prints `USAGE …`, the command was malformed and the API was **not**
+  called: fix the arguments and run it once more. This is the only re-run
+  allowed.
+- Otherwise never call `status` again, never switch to section 7 because of
+  it, and never call the API any other way. The backend accepts only one
+  update per execution.
 
 ## 6. Result messages and final reply
 
@@ -206,10 +219,11 @@ The final reply is:
 For every early stop, pick the result message from section 6 and run:
 
 ```bash
-python3 blob.py status 'T' 'A' 'X' failed "<result message>"
+python3 blob.py status 'T' 'A' 'X' failed 0 "<result message>"
 ```
 
-The backend shows the result message as the fail reason. Put the `Detail:`
+Early stops always send `0` as `credit_used`: no report was delivered. The
+backend shows the result message as the fail reason. Put the `Detail:`
 line and any run notes gathered so far in the final reply (section 6), not in
 this command. The rules in section 5 for `status` output apply here too: call
 it once, and add its line to the reply if it is not `NOTIFIED`.
