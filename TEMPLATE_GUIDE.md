@@ -30,6 +30,10 @@ template:
 4. An optional totals row under the sample row, for example
    `=SUBTOTAL(9,O5:O5)`. Its ranges are extended to cover all the data.
 
+Anything else under the sample row is cleared. If you build your template by
+editing last month's report, its old rows are removed and never delivered,
+but it is cleaner to keep just the headers and one sample row.
+
 The **Summary** sheet (also recognised when named Dashboard or Overview) is
 made of numbered sections such as `1. Data in scope` or `4. ITC To Be
 Reclaimed`. You can remove a section, change its columns, or move it. A

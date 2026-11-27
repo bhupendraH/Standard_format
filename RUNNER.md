@@ -125,8 +125,9 @@ that every run behaves the same way:
 - Step 6.4 (recalculate): if LibreOffice is available, run
   `soffice --headless --convert-to xlsx --outdir work/recalc work/out/<file>`,
   open the copy with `data_only=True`, and confirm there is no `#REF!`, `#N/A`,
-  `#VALUE!`, `#DIV/0!` or `#NAME?` and, if the template has the Summary
-  control check, that it is 0.
+  `#VALUE!`, `#DIV/0!` or `#NAME?`, that the Summary control check is 0 if
+  the template has it, and that every formula cell equals the value Python
+  computed for its field and row (Step 7).
   Upload the openpyxl file, not the LibreOffice copy. If LibreOffice is not
   available, compute the control check and totals in Python instead and record
   the run note "Formulas not recalculated during the run (LibreOffice
